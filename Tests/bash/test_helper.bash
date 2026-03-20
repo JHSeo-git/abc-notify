@@ -1,5 +1,7 @@
 # Source the script under test
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ABC_NOTIFY_BIN="${SCRIPT_DIR}/bin/abc-notify"
+export ABC_NOTIFY_BIN
 source "${SCRIPT_DIR}/bin/abc-notify"
 
 setup() {

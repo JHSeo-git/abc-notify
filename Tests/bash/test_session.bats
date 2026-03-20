@@ -17,7 +17,7 @@ load test_helper
 
 @test "cmd_cleanup: handles missing session_id gracefully" {
   # Should not fail when session_id is missing
-  run bash -c "echo '{\"other_key\":\"value\"}' | $(cd /Users/a78256/Projects/abc-notify && pwd)/bin/abc-notify cleanup"
+  run bash -c "echo '{\"other_key\":\"value\"}' | \"$ABC_NOTIFY_BIN\" cleanup"
   [ "$status" -eq 0 ]
 }
 
