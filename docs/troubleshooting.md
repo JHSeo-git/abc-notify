@@ -34,6 +34,7 @@ Check:
 - whether macOS notifications allow `terminal-notifier`
 - whether `NOTIFY_DISABLED=true`
 - whether the same session or thread is being throttled
+- whether abc-notify intentionally skipped the notification because your terminal was already focused
 
 Fix:
 
@@ -50,6 +51,7 @@ Possible causes:
 - the native helper is missing
 - Accessibility permission has not been granted
 - you are in Codex mode, which only activates the app instead of restoring an exact Claude session window
+- you installed with the raw script path and never installed `abc-notify-native` separately
 
 Recommended steps:
 
@@ -66,6 +68,12 @@ Then set `TERMINAL_APP` explicitly.
 TERMINAL_APP=iTerm2
 ```
 
+You can also provide a comma-separated list:
+
+```bash
+TERMINAL_APP=iTerm2,Terminal,WezTerm
+```
+
 ## Claude Hook Not Working
 
 Re-register:
@@ -80,6 +88,7 @@ Check this file:
 - `~/.claude/settings.json`
 
 It should contain entries for `abc-notify init`, `abc-notify notify`, and `abc-notify cleanup`.
+Those entries are registered under `SessionStart`, `Stop`, `Notification`, and `SessionEnd`.
 
 ## Codex Notify Not Working
 
@@ -95,6 +104,7 @@ Check this file:
 - `~/.codex/config.toml`
 
 It should contain `notify = ["abc-notify"]` or include `"abc-notify"` in an existing notify array.
+If your project needs different terminal preferences, check whether `cwd`-specific `.abc-notify.env` overrides are being loaded.
 
 ## Temp Directory Problems
 
@@ -109,7 +119,8 @@ If `doctor` reports a writable error, check permissions and the state of `/tmp` 
 abc-notify can still work without the native helper, but:
 
 - exact window restore is less reliable
-- behavior is mostly limited to app activation
+- Claude Code uses AppleScript activation and best-effort window raising
+- Codex still uses app activation, not per-session exact window restore
 - focus quality may vary by terminal app
 
 If accurate window focus matters, install the native helper.

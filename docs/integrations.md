@@ -37,7 +37,13 @@ Flow:
 1. `init` stores terminal app and window information at session start
 2. `notify` sends a notification for completion or approval-required events
 3. Clicking the notification runs the generated `focus.sh`
-4. `cleanup` removes temporary session state when the session ends
+4. `cleanup` removes temporary session state when the session ends and prunes stale session directories older than 5 days
+
+Skip conditions:
+
+- `notify` does nothing when `NOTIFY_DISABLED=true`
+- `notify` does nothing when the session is still inside the throttle window
+- `notify` does nothing when the captured terminal window is already focused
 
 Temporary state location:
 
@@ -63,7 +69,8 @@ Config location:
 
 Config change:
 
-- Adds `notify = ["abc-notify"]`
+- Adds `abc-notify` to the `notify` array in `~/.codex/config.toml`
+- If no `notify` array exists, it creates `notify = ["abc-notify"]`
 
 Codex event mapping:
 
@@ -71,10 +78,17 @@ Codex event mapping:
 - `agent-turn-paused` -> `Approval required`
 
 Codex mode accepts a JSON argument directly.
+The `cwd` field is used to load project-local `.abc-notify.env` overrides when available.
 
 ```bash
 abc-notify '{"type":"agent-turn-complete","cwd":"/path/to/project","thread-id":"123"}'
 ```
+
+Skip conditions:
+
+- notifications are skipped when `NOTIFY_DISABLED=true`
+- notifications are skipped when the same `thread-id` is still inside the throttle window
+- notifications are skipped when one of the configured terminal apps is already frontmost
 
 ## Focus Restore Differences
 
@@ -82,7 +96,7 @@ Claude Code:
 
 - Attempts to restore the exact window captured at session start
 - Uses window ID and PID when the native helper is available
-- Falls back to AppleScript when it is not
+- Falls back to AppleScript app activation and best-effort window raising when it is not
 
 Codex:
 
@@ -113,6 +127,5 @@ Search order:
 1. Next to the `abc-notify` executable
 2. `/usr/local/libexec/abc-notify-native`
 3. `/opt/homebrew/libexec/abc-notify-native`
-4. `/usr/local/libexec/abc-notify-native` (same path as the Intel Homebrew location)
 
 The simplest manual setup is to place `abc-notify-native` in the same directory as `abc-notify`.

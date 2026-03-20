@@ -1,7 +1,8 @@
 # abc-notify
 
 Desktop notifications for AI CLI tools on macOS.
-It sends alerts for Claude Code and Codex events, and can bring you back to your terminal when you click the notification.
+It sends alerts for Claude Code and Codex events, and can bring focus back to your terminal when you click the notification.
+Exact window restore for Claude Code requires `abc-notify-native`. Codex restores app focus.
 
 ## Quick Start
 
@@ -12,12 +13,12 @@ abc-notify setup all
 abc-notify doctor
 ```
 
-For full install steps, manual setup, and native helper details:
-- [docs/getting-started.md](docs/getting-started.md)
-
 ## Docs
 
+For full install steps, manual setup, native helper install, and config details:
+
 For users:
+
 - [Getting Started](docs/getting-started.md)
 - [CLI Reference](docs/cli.md)
 - [Configuration](docs/configuration.md)
@@ -25,9 +26,10 @@ For users:
 - [Troubleshooting](docs/troubleshooting.md)
 
 For developers:
+
 - [Development](docs/development.md)
 
-## Commands
+## Common Commands
 
 ```text
 abc-notify setup [claude|codex|all]
@@ -37,12 +39,16 @@ abc-notify version
 abc-notify help
 ```
 
+For hook commands, native helper commands, and Codex JSON mode:
+
+- [CLI Reference](docs/cli.md)
+
 ## Supported Tools
 
-| Tool | Events | Focus Restore |
-|------|--------|---------------|
-| Claude Code | Task complete, Approval required | Exact window |
-| Codex CLI | Task complete, Approval required | App activation |
+| Tool        | Events                           | Focus Restore                                             |
+| ----------- | -------------------------------- | --------------------------------------------------------- |
+| Claude Code | Task complete, Approval required | Exact window with native helper, otherwise fallback focus |
+| Codex CLI   | Task complete, Approval required | App activation                                            |
 
 ## License
 

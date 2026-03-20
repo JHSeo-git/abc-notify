@@ -37,8 +37,12 @@ curl -fsSL https://raw.githubusercontent.com/JHSeo-git/abc-notify/main/scripts/i
 
 Notes:
 
-- This path installs the `abc-notify` shell binary and shared `VERSION` file.
-- Running the raw script alone usually does not build and install `abc-notify-native`.
+- This installer requires macOS and Homebrew.
+- If `terminal-notifier` or `jq` is missing, the script installs them with Homebrew first.
+- It installs the `abc-notify` shell binary to `/usr/local/bin/abc-notify` and `VERSION` to `/usr/local/share/abc-notify/VERSION`.
+- It runs `abc-notify setup all` and `abc-notify doctor` automatically at the end.
+- When run directly from the raw GitHub URL, the script does not have the full repository checkout, so it usually cannot build and install `abc-notify-native`.
+- In that mode, abc-notify uses the AppleScript fallback until you install the native helper separately.
 - If you want more reliable window focus restore, prefer the Homebrew path or the manual install below with the native helper.
 
 ### Manual Install
