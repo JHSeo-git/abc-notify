@@ -170,7 +170,7 @@ main() {
 
   local notes_file
   notes_file="$(create_release_notes_file "$version")"
-  trap 'rm -f "$notes_file"' EXIT
+  trap "rm -f '$notes_file'" EXIT
 
   create_tag "$version"
   push_release_refs "$branch" "$version"

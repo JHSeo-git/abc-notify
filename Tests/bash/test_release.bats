@@ -116,3 +116,89 @@ EOF
 
   [ "$status" -eq 0 ]
 }
+
+@test "release: main exits cleanly after successful release flow" {
+  local repo="$BATS_TEST_TMPDIR/repo"
+  local stub_bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$repo" "$stub_bin"
+  cat > "$repo/VERSION" <<'EOF'
+v1.2.3
+EOF
+  cat > "$repo/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## v1.2.3 - 2026-03-20
+- Test release notes.
+EOF
+  cat > "$stub_bin/git" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2 $3" in
+  "branch --show-current ")
+    echo main
+    exit 0
+    ;;
+  "diff --quiet ")
+    exit 0
+    ;;
+  "diff --cached --quiet")
+    exit 0
+    ;;
+  "ls-files --others --exclude-standard")
+    exit 0
+    ;;
+  "rev-parse -q --verify")
+    exit 1
+    ;;
+  "ls-remote --exit-code --tags")
+    exit 2
+    ;;
+  "tag -a v1.2.3")
+    exit 0
+    ;;
+  "push origin main")
+    exit 0
+    ;;
+  "push origin v1.2.3")
+    exit 0
+    ;;
+esac
+
+echo "unexpected git args: $*" >&2
+exit 99
+EOF
+  cat > "$stub_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2 $3" in
+  "auth status ")
+    exit 0
+    ;;
+  "release view v1.2.3")
+    exit 1
+    ;;
+  "release create v1.2.3")
+    exit 0
+    ;;
+esac
+
+echo "unexpected gh args: $*" >&2
+exit 99
+EOF
+  cat > "$stub_bin/swift" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  cat > "$stub_bin/bats" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  cat > "$stub_bin/bun" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$stub_bin/git" "$stub_bin/gh" "$stub_bin/swift" "$stub_bin/bats" "$stub_bin/bun"
+
+  run bash -lc "PATH='$stub_bin:$PATH'; RELEASE_ROOT='$repo' '$BATS_TEST_DIRNAME/../../scripts/release.sh'"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Release v1.2.3 created."* ]]
+}
