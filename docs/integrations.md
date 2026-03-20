@@ -39,6 +39,12 @@ Flow:
 3. Clicking the notification runs the generated `focus.sh`
 4. `cleanup` removes temporary session state when the session ends and prunes stale session directories older than 5 days
 
+Notification body behavior:
+
+- `Stop` uses a preview of `last_assistant_message` when Claude includes it in the hook payload
+- `Notification` also uses that preview when present
+- if the assistant text is empty, abc-notify falls back to the fixed event message such as `Task completed` or `Approval required`
+
 Skip conditions:
 
 - `notify` does nothing when `NOTIFY_DISABLED=true`
@@ -76,6 +82,11 @@ Codex event mapping:
 
 - `agent-turn-complete` -> `Task completed`
 - `agent-turn-paused` -> `Approval required`
+
+Notification body behavior:
+
+- if the notify payload includes assistant text in a supported top-level field, abc-notify shows a short preview of that text
+- if no assistant text is present, abc-notify keeps the fixed fallback message from the event mapping above
 
 Codex mode accepts a JSON argument directly.
 The `cwd` field is used to load project-local `.abc-notify.env` overrides when available.

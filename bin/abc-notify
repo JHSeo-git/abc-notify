@@ -234,6 +234,62 @@ update_throttle() {
   date +%s > "$throttle_file"
 }
 
+normalize_notification_preview() {
+  local raw="${1:-}"
+  printf '%s' "$raw" | tr '\r\n\t' '   ' | awk '{$1=$1; print}'
+}
+
+truncate_notification_preview() {
+  local message="${1:-}"
+  local limit="${NOTIFY_PREVIEW_LIMIT:-140}"
+
+  if [[ -z "$message" ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  if (( ${#message} > limit )); then
+    printf '%s...\n' "${message:0:limit}"
+    return 0
+  fi
+
+  printf '%s\n' "$message"
+}
+
+build_notification_message() {
+  local raw_message="${1:-}"
+  local fallback_message="${2:-Notification}"
+  local normalized
+  normalized="$(normalize_notification_preview "$raw_message")"
+
+  if [[ -z "$normalized" ]]; then
+    printf '%s\n' "$fallback_message"
+    return 0
+  fi
+
+  truncate_notification_preview "$normalized"
+}
+
+notify_desktop() {
+  terminal-notifier "$@" &>/dev/null &
+}
+
+extract_codex_assistant_message() {
+  local json="${1:-}"
+  echo "$json" | jq -r '
+    [
+      .last_assistant_message?,
+      .["last-assistant-message"]?,
+      .lastAssistantMessage?,
+      .assistant_message?,
+      .assistantMessage?,
+      .message?
+    ]
+    | map(select(type == "string" and length > 0))
+    | .[0] // empty
+  '
+}
+
 # ---------------------------------------------------------------------------
 # Native helper binary lookup
 # ---------------------------------------------------------------------------
@@ -474,12 +530,16 @@ cmd_notify() {
   fi
 
   # Determine message based on event
-  local message
+  local fallback_message
   case "$hook_event_name" in
-    Stop)         message="Task completed" ;;
-    Notification) message="Approval required" ;;
-    *)            message="Notification" ;;
+    Stop)         fallback_message="Task completed" ;;
+    Notification) fallback_message="Approval required" ;;
+    *)            fallback_message="Notification" ;;
   esac
+
+  local last_assistant_message message
+  last_assistant_message=$(echo "$json" | jq -r '.last_assistant_message // empty')
+  message="$(build_notification_message "$last_assistant_message" "$fallback_message")"
 
   # Build notification command
   local notify_args=(
@@ -494,7 +554,7 @@ cmd_notify() {
     notify_args+=(-execute "${session_dir}/focus.sh")
   fi
 
-  terminal-notifier "${notify_args[@]}" &>/dev/null &
+  notify_desktop "${notify_args[@]}"
 
   # Update throttle timestamp
   mkdir -p "$session_dir"
@@ -554,12 +614,16 @@ cmd_codex() {
   fi
 
   # Determine message based on event type
-  local message
+  local fallback_message
   case "$event_type" in
-    agent-turn-complete)  message="Task completed" ;;
-    agent-turn-paused)    message="Approval required" ;;
-    *)                    message="Notification" ;;
+    agent-turn-complete)  fallback_message="Task completed" ;;
+    agent-turn-paused)    fallback_message="Approval required" ;;
+    *)                    fallback_message="Notification" ;;
   esac
+
+  local last_assistant_message message
+  last_assistant_message="$(extract_codex_assistant_message "$json")"
+  message="$(build_notification_message "$last_assistant_message" "$fallback_message")"
 
   # Build notification command
   local notify_args=(
@@ -577,7 +641,7 @@ cmd_codex() {
     fi
   fi
 
-  terminal-notifier "${notify_args[@]}" &>/dev/null &
+  notify_desktop "${notify_args[@]}"
 
   # Update throttle
   update_throttle "$throttle_file"
