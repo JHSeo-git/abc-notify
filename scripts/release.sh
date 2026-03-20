@@ -114,7 +114,7 @@ run_release_gate() {
 create_release_notes_file() {
   local version="$1"
   local notes_file
-  notes_file="$(mktemp /tmp/abc-notify-release-notes.XXXXXX.md)"
+  notes_file="$(mktemp "${TMPDIR:-/tmp}/abc-notify-release-notes.XXXXXX")"
   extract_notes_from_changelog "$version" > "$notes_file"
   printf '%s\n' "$notes_file"
 }

@@ -117,6 +117,21 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "release: create_release_notes_file creates unique files on repeated calls" {
+  local repo="$BATS_TEST_TMPDIR/repo"
+  mkdir -p "$repo"
+  cat > "$repo/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## v1.2.3 - 2026-03-20
+- Test release notes.
+EOF
+
+  run bash -lc "TMPDIR='$BATS_TEST_TMPDIR'; RELEASE_ROOT='$repo'; source '$BATS_TEST_DIRNAME/../../scripts/release.sh'; first=\$(create_release_notes_file 'v1.2.3'); second=\$(create_release_notes_file 'v1.2.3'); printf '%s\n%s\n' \"\$first\" \"\$second\"; [[ -f \"\$first\" ]]; [[ -f \"\$second\" ]]; [[ \"\$first\" != \"\$second\" ]]"
+
+  [ "$status" -eq 0 ]
+}
+
 @test "release: main exits cleanly after successful release flow" {
   local repo="$BATS_TEST_TMPDIR/repo"
   local stub_bin="$BATS_TEST_TMPDIR/bin"
