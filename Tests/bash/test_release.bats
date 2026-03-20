@@ -72,3 +72,28 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"gh auth status"* ]]
 }
+
+@test "release: ensure_tag_absent allows missing remote tag" {
+  local stub_bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$stub_bin"
+  cat > "$stub_bin/git" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  rev-parse)
+    exit 1
+    ;;
+  ls-remote)
+    exit 2
+    ;;
+  *)
+    echo "unexpected git args: $*" >&2
+    exit 99
+    ;;
+esac
+EOF
+  chmod +x "$stub_bin/git"
+
+  run bash -lc "PATH='$stub_bin:$PATH'; source '$BATS_TEST_DIRNAME/../../scripts/release.sh'; ensure_tag_absent 'v1.2.3'"
+
+  [ "$status" -eq 0 ]
+}

@@ -82,8 +82,16 @@ ensure_notes_present() {
 
 ensure_tag_absent() {
   local tag="$1"
-  git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1 && err "Local tag already exists: $tag"
-  git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1 && err "Remote tag already exists: $tag"
+  if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1; then
+    err "Local tag already exists: $tag"
+  fi
+
+  if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+    err "Remote tag already exists: $tag"
+  else
+    local status=$?
+    [[ "$status" -eq 2 ]] || err "Failed to check remote tag state for ${tag} on origin"
+  fi
 }
 
 ensure_release_absent() {
