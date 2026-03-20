@@ -22,6 +22,21 @@ load test_helper
   [ "$output" = "abc-notify v9.9.9" ]
 }
 
+@test "cmd_version: follows symlinked script back to repo VERSION file" {
+  local repo="$BATS_TEST_TMPDIR/repo"
+  local prefix="$BATS_TEST_TMPDIR/prefix"
+  mkdir -p "$repo/bin" "$prefix/bin"
+  cp "$BATS_TEST_DIRNAME/../../bin/abc-notify" "$repo/bin/abc-notify"
+  chmod +x "$repo/bin/abc-notify"
+  printf 'v9.9.9\n' > "$repo/VERSION"
+  ln -s "$repo/bin/abc-notify" "$prefix/bin/abc-notify"
+
+  run "$prefix/bin/abc-notify" version
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "abc-notify v9.9.9" ]
+}
+
 @test "cmd_help: contains usage information" {
   run cmd_help
   [ "$status" -eq 0 ]

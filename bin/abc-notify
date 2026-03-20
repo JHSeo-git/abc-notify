@@ -20,9 +20,22 @@ read_version_file() {
   printf '%s\n' "$value"
 }
 
+resolve_script_dir() {
+  local source="${BASH_SOURCE[0]}"
+
+  while [[ -L "$source" ]]; do
+    local dir
+    dir="$(cd "$(dirname "$source")" && pwd)"
+    source="$(readlink "$source")"
+    [[ "$source" != /* ]] && source="${dir}/${source}"
+  done
+
+  cd "$(dirname "$source")" && pwd
+}
+
 resolve_version() {
   local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  script_dir="$(resolve_script_dir)"
 
   local -a candidates=(
     "${ABC_NOTIFY_VERSION_FILE:-}"
@@ -85,13 +98,86 @@ bundle_id_for() {
   case "${1}" in
     iTerm2|iTerm)        echo "com.googlecode.iterm2" ;;
     Terminal)            echo "com.apple.Terminal" ;;
-    WezTerm)             echo "org.wezfurlong.wezterm" ;;
+    WezTerm)             echo "com.github.wez.wezterm" ;;
     Alacritty)           echo "org.alacritty" ;;
     kitty)               echo "net.kovidgoyal.kitty" ;;
     Hyper)               echo "co.zeit.hyper" ;;
     Ghostty)             echo "com.mitchellh.ghostty" ;;
+    VSCode)              echo "com.microsoft.VSCode" ;;
+    Warp)                echo "dev.warp.Warp-Stable" ;;
     *)                   echo "" ;;
   esac
+}
+
+detect_terminal_bundle() {
+  # Priority: CODEX_ACTIVATE_BUNDLE > __CFBundleIdentifier > TERM_PROGRAM > tmux env > app-specific env > configured app
+  if [[ -n "${CODEX_ACTIVATE_BUNDLE:-}" ]]; then
+    printf '%s\n' "$CODEX_ACTIVATE_BUNDLE"
+    return 0
+  fi
+
+  if [[ -n "${__CFBundleIdentifier:-}" ]]; then
+    printf '%s\n' "$__CFBundleIdentifier"
+    return 0
+  fi
+
+  local tp="${TERM_PROGRAM:-}"
+  case "$tp" in
+    iTerm.app|iTerm2)   printf '%s\n' "com.googlecode.iterm2"; return 0 ;;
+    Apple_Terminal)     printf '%s\n' "com.apple.Terminal"; return 0 ;;
+    vscode)             printf '%s\n' "com.microsoft.VSCode"; return 0 ;;
+    WezTerm)            printf '%s\n' "com.github.wez.wezterm"; return 0 ;;
+    Alacritty)          printf '%s\n' "org.alacritty"; return 0 ;;
+    Hyper)              printf '%s\n' "co.zeit.hyper"; return 0 ;;
+    WarpTerminal)       printf '%s\n' "dev.warp.Warp-Stable"; return 0 ;;
+    ghostty)            printf '%s\n' "com.mitchellh.ghostty"; return 0 ;;
+    kitty)              printf '%s\n' "net.kovidgoyal.kitty"; return 0 ;;
+  esac
+
+  if [[ -n "${TMUX:-}" ]] && command -v tmux >/dev/null 2>&1; then
+    local tmux_tp
+    tmux_tp="$(tmux show-environment TERM_PROGRAM 2>/dev/null | sed 's/^TERM_PROGRAM=//' || true)"
+    case "$tmux_tp" in
+      iTerm.app|iTerm2) printf '%s\n' "com.googlecode.iterm2"; return 0 ;;
+      Apple_Terminal)   printf '%s\n' "com.apple.Terminal"; return 0 ;;
+      vscode)           printf '%s\n' "com.microsoft.VSCode"; return 0 ;;
+      WezTerm)          printf '%s\n' "com.github.wez.wezterm"; return 0 ;;
+      Alacritty)        printf '%s\n' "org.alacritty"; return 0 ;;
+      Hyper)            printf '%s\n' "co.zeit.hyper"; return 0 ;;
+      WarpTerminal)     printf '%s\n' "dev.warp.Warp-Stable"; return 0 ;;
+      ghostty)          printf '%s\n' "com.mitchellh.ghostty"; return 0 ;;
+      kitty)            printf '%s\n' "net.kovidgoyal.kitty"; return 0 ;;
+    esac
+  fi
+
+  if [[ -n "${GHOSTTY_RESOURCES_DIR:-}" ]]; then
+    printf '%s\n' "com.mitchellh.ghostty"
+    return 0
+  fi
+  if [[ -n "${KITTY_WINDOW_ID:-}" ]]; then
+    printf '%s\n' "net.kovidgoyal.kitty"
+    return 0
+  fi
+  if [[ -n "${ITERM_SESSION_ID:-}" ]]; then
+    printf '%s\n' "com.googlecode.iterm2"
+    return 0
+  fi
+  if [[ -n "${WEZTERM_PANE:-}" ]]; then
+    printf '%s\n' "com.github.wez.wezterm"
+    return 0
+  fi
+
+  if [[ -n "${TERMINAL_APP:-}" ]]; then
+    local active_term bid
+    active_term="$(find_active_terminal "$TERMINAL_APP")"
+    bid="$(bundle_id_for "$active_term")"
+    if [[ -n "$bid" ]]; then
+      printf '%s\n' "$bid"
+      return 0
+    fi
+  fi
+
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -483,12 +569,9 @@ cmd_codex() {
     -group "abc-notify-codex-${thread_id:-default}"
   )
 
-  # Add app activation on click — find the most relevant running terminal
-  local active_term
-  active_term=$(find_active_terminal "$TERMINAL_APP")
-  if [[ -n "$active_term" ]]; then
-    local bid
-    bid=$(bundle_id_for "$active_term")
+  # Add app activation on click using bundle detection tuned for Codex terminal environments
+  local bid
+  if bid="$(detect_terminal_bundle)"; then
     if [[ -n "$bid" ]]; then
       notify_args+=(-activate "$bid")
     fi
