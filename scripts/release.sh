@@ -96,7 +96,12 @@ ensure_tag_absent() {
 
 ensure_release_absent() {
   local tag="$1"
-  gh release view "$tag" >/dev/null 2>&1 && err "GitHub release already exists: $tag"
+  if gh release view "$tag" >/dev/null 2>&1; then
+    err "GitHub release already exists: $tag"
+  else
+    local status=$?
+    [[ "$status" -eq 1 ]] || err "Failed to check GitHub release state for ${tag}"
+  fi
 }
 
 run_release_gate() {

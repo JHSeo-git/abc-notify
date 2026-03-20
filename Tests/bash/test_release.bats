@@ -97,3 +97,22 @@ EOF
 
   [ "$status" -eq 0 ]
 }
+
+@test "release: ensure_release_absent allows missing GitHub release" {
+  local stub_bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$stub_bin"
+  cat > "$stub_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "release" && "$2" == "view" ]]; then
+  exit 1
+fi
+
+echo "unexpected gh args: $*" >&2
+exit 99
+EOF
+  chmod +x "$stub_bin/gh"
+
+  run bash -lc "PATH='$stub_bin:$PATH'; source '$BATS_TEST_DIRNAME/../../scripts/release.sh'; ensure_release_absent 'v1.2.3'"
+
+  [ "$status" -eq 0 ]
+}
