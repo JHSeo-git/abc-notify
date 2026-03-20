@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate shell scripts
+        run: bash -n bin/abc-notify scripts/install.sh scripts/uninstall.sh
+
+      - name: Build Swift binary
+        run: swift build --product abc-notify-native
+
+      - name: Run Swift tests
+        run: swift test --parallel
+
+      - name: Setup Bats
+        uses: bats-core/bats-action@4.0.0
+        with:
+          support-install: false
+          assert-install: false
+          detik-install: false
+          file-install: false
+
+      - name: Run Bash tests
+        run: bats Tests/bash/
+
+      - name: Smoke test binaries
+        run: |
+          set -euo pipefail
+          bin/abc-notify help >/dev/null
+          bin/abc-notify version
+          .build/debug/abc-notify-native version

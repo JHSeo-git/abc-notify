@@ -1,0 +1,9 @@
+{
+  "name": "abc-notify",
+  "private": true,
+  "scripts": {
+    "build": "swift build",
+    "docs:list": "bun scripts/docs-list.ts",
+    "test": "swift test"
+  }
+}

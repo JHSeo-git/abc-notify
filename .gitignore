@@ -1,0 +1,19 @@
+# Environment / config
+.abc-notify.env
+
+# Swift build
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+
+# claude
+.claude/settings.local.json
+
+# misc
+docs/superpowers/

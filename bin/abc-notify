@@ -1,0 +1,838 @@
+#!/usr/bin/env bash
+# abc-notify — Desktop notifications for AI CLI tools (Claude Code, Codex)
+# https://github.com/JHSeo-git/abc-notify
+
+set -euo pipefail
+
+DEFAULT_VERSION="v0.1.0"
+NOTIFY_DIR="/tmp/abc-notify"
+
+read_version_file() {
+  local path="${1:-}"
+  [[ -n "$path" && -f "$path" ]] || return 1
+
+  local value
+  value="$(<"$path")"
+  value="${value%%$'\n'*}"
+  value="${value%%$'\r'*}"
+
+  [[ -n "$value" ]] || return 1
+  printf '%s\n' "$value"
+}
+
+resolve_version() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  local -a candidates=(
+    "${ABC_NOTIFY_VERSION_FILE:-}"
+    "${script_dir}/../VERSION"
+    "${script_dir}/VERSION"
+    "${script_dir}/../share/abc-notify/VERSION"
+    "/opt/homebrew/share/abc-notify/VERSION"
+    "/usr/local/share/abc-notify/VERSION"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if value="$(read_version_file "$candidate")"; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "$DEFAULT_VERSION"
+}
+
+VERSION="$(resolve_version)"
+
+# ---------------------------------------------------------------------------
+# Configuration loading
+# ---------------------------------------------------------------------------
+
+load_config() {
+  local project_dir="${1:-$PWD}"
+
+  # 1. Global config
+  [[ -f "$HOME/.abc-notify.env" ]] && source "$HOME/.abc-notify.env"
+
+  # 2. Project config (overrides global)
+  [[ -f "${project_dir}/.abc-notify.env" ]] && source "${project_dir}/.abc-notify.env"
+
+  # 3. Fallbacks
+  TERMINAL_APP="${TERMINAL_APP:-$(map_term_program "${TERM_PROGRAM:-}")}"
+  NOTIFY_SOUND="${NOTIFY_SOUND:-Glass}"
+  NOTIFY_THROTTLE="${NOTIFY_THROTTLE:-2}"
+  NOTIFY_DISABLED="${NOTIFY_DISABLED:-false}"
+  NOTIFY_TITLE_CLAUDE="${NOTIFY_TITLE_CLAUDE:-Claude Code}"
+  NOTIFY_TITLE_CODEX="${NOTIFY_TITLE_CODEX:-Codex}"
+}
+
+map_term_program() {
+  case "${1}" in
+    iTerm.app|iTerm2)   echo "iTerm2" ;;
+    Apple_Terminal)      echo "Terminal" ;;
+    WezTerm)             echo "WezTerm" ;;
+    Alacritty)           echo "Alacritty" ;;
+    kitty)               echo "kitty" ;;
+    Hyper)               echo "Hyper" ;;
+    ghostty)             echo "Ghostty" ;;
+    *)                   echo "" ;;
+  esac
+}
+
+bundle_id_for() {
+  case "${1}" in
+    iTerm2|iTerm)        echo "com.googlecode.iterm2" ;;
+    Terminal)            echo "com.apple.Terminal" ;;
+    WezTerm)             echo "org.wezfurlong.wezterm" ;;
+    Alacritty)           echo "org.alacritty" ;;
+    kitty)               echo "net.kovidgoyal.kitty" ;;
+    Hyper)               echo "co.zeit.hyper" ;;
+    Ghostty)             echo "com.mitchellh.ghostty" ;;
+    *)                   echo "" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+require_macos() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "Error: abc-notify requires macOS" >&2
+    exit 1
+  fi
+}
+
+require_deps() {
+  local missing=()
+  command -v terminal-notifier &>/dev/null || missing+=("terminal-notifier")
+  command -v jq &>/dev/null || missing+=("jq")
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "Error: Missing dependencies: ${missing[*]}" >&2
+    echo "Install with: brew install ${missing[*]}" >&2
+    exit 1
+  fi
+}
+
+read_stdin_json() {
+  if [[ -t 0 ]]; then
+    echo "Error: This command expects JSON input via stdin." >&2
+    echo "It is intended to be called by a hook, not directly." >&2
+    exit 1
+  fi
+  local json
+  json="$(cat)"
+  echo "$json"
+}
+
+is_throttled() {
+  local throttle_file="$1"
+  local threshold="${NOTIFY_THROTTLE:-2}"
+
+  if [[ -f "$throttle_file" ]]; then
+    local last_time
+    last_time=$(cat "$throttle_file" 2>/dev/null || echo 0)
+    local now
+    now=$(date +%s)
+    if (( now - last_time < threshold )); then
+      return 0  # throttled
+    fi
+  fi
+  return 1  # not throttled
+}
+
+update_throttle() {
+  local throttle_file="$1"
+  date +%s > "$throttle_file"
+}
+
+# ---------------------------------------------------------------------------
+# Native helper binary lookup
+# ---------------------------------------------------------------------------
+
+# Search order: next to this script, libexec, PATH
+find_native_bin() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  # 1. Next to abc-notify (e.g. /usr/local/bin/abc-notify-native)
+  [[ -x "${script_dir}/abc-notify-native" ]] && echo "${script_dir}/abc-notify-native" && return
+
+  # 2. libexec
+  local libexec="/usr/local/libexec/abc-notify-native"
+  [[ -x "$libexec" ]] && echo "$libexec" && return
+
+  # 3. Homebrew libexec (Apple Silicon / Intel)
+  for prefix in "/opt/homebrew" "/usr/local"; do
+    local p="${prefix}/libexec/abc-notify-native"
+    [[ -x "$p" ]] && echo "$p" && return
+  done
+
+  return 1
+}
+
+NATIVE_BIN=""
+has_native_helper() {
+  if [[ -z "$NATIVE_BIN" ]]; then
+    NATIVE_BIN=$(find_native_bin 2>/dev/null) || NATIVE_BIN="__none__"
+  fi
+  [[ "$NATIVE_BIN" != "__none__" ]]
+}
+
+is_window_focused() {
+  local app_name="$1"
+  local window_id="$2"
+  local capture_method="${3:-applescript}"
+  local owner_pid="${4:-}"
+
+  # Native helper path
+  if [[ "$capture_method" == "native" ]] && has_native_helper; then
+    if [[ -n "$window_id" && -n "$owner_pid" ]]; then
+      local result
+      result=$("$NATIVE_BIN" is-focused --window-id "$window_id" --pid "$owner_pid" 2>/dev/null) || true
+      [[ "$result" == "true" ]] && return 0
+      return 1
+    fi
+  fi
+
+  # AppleScript fallback
+  local front_app
+  front_app=$(osascript -e 'tell application "System Events" to return name of first application process whose frontmost is true' 2>/dev/null || echo "")
+
+  if [[ "$front_app" == "$app_name" ]]; then
+    local front_window_id
+    front_window_id=$(osascript -e "tell application \"$app_name\" to return id of front window" 2>/dev/null || echo "")
+    if [[ "$front_window_id" == "$window_id" ]]; then
+      return 0  # focused
+    fi
+  fi
+  return 1  # not focused
+}
+
+parse_terminal_apps() {
+  local apps_str="${1:-}"
+  local app
+  local _apps=()
+  IFS=',' read -ra _apps <<< "$apps_str"
+  for app in "${_apps[@]+"${_apps[@]}"}"; do
+    app="${app# }"  # trim leading space
+    app="${app% }"  # trim trailing space
+    [[ -n "$app" ]] && echo "$app"
+  done
+}
+
+is_any_terminal_focused() {
+  local apps_str="$1"
+  local front_app
+  front_app=$(osascript -e 'tell application "System Events" to return name of first application process whose frontmost is true' 2>/dev/null || echo "")
+  [[ -z "$front_app" ]] && return 1
+
+  local app
+  while IFS= read -r app; do
+    [[ "$front_app" == "$app" ]] && return 0
+  done < <(parse_terminal_apps "$apps_str")
+  return 1
+}
+
+find_active_terminal() {
+  local apps_str="$1"
+  local running_procs
+  running_procs=$(osascript -e 'tell application "System Events" to return name of every application process' 2>/dev/null || echo "")
+
+  local app
+  while IFS= read -r app; do
+    if echo "$running_procs" | grep -qF "$app"; then
+      echo "$app"
+      return
+    fi
+  done < <(parse_terminal_apps "$apps_str")
+
+  # Fallback: return first configured app
+  parse_terminal_apps "$apps_str" | head -1
+}
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd_init() {
+  require_macos
+  require_deps
+
+  local json
+  json="$(read_stdin_json)"
+
+  local session_id
+  session_id=$(echo "$json" | jq -r '.session_id // empty')
+  if [[ -z "$session_id" ]]; then
+    echo "Error: No session_id in input" >&2
+    exit 1
+  fi
+
+  load_config
+
+  local term_app="" window_id="" owner_pid="" capture_method="applescript"
+
+  # Try native helper first
+  if has_native_helper; then
+    local capture_json
+    capture_json=$("$NATIVE_BIN" capture 2>/dev/null) || true
+    if [[ -n "$capture_json" ]]; then
+      window_id=$(echo "$capture_json" | jq -r '.window_id // empty')
+      owner_pid=$(echo "$capture_json" | jq -r '.owner_pid // empty')
+      term_app=$(echo "$capture_json" | jq -r '.owner_name // empty')
+      capture_method="native"
+    fi
+  fi
+
+  # Fallback to AppleScript if native capture failed
+  if [[ "$capture_method" != "native" ]]; then
+    if [[ -n "${TERMINAL_APP:-}" ]]; then
+      term_app=$(parse_terminal_apps "$TERMINAL_APP" | head -1)
+    fi
+    if [[ -z "$term_app" ]]; then
+      term_app=$(map_term_program "${TERM_PROGRAM:-}")
+    fi
+    if [[ -z "$term_app" ]]; then
+      term_app=$(osascript -e 'tell application "System Events" to return name of first application process whose frontmost is true' 2>/dev/null || echo "")
+    fi
+
+    if [[ -n "$term_app" ]]; then
+      window_id=$(osascript -e "tell application \"$term_app\" to return id of front window" 2>/dev/null || echo "")
+    fi
+  fi
+
+  # Create session directory
+  local session_dir="${NOTIFY_DIR}/${session_id}"
+  mkdir -p "$session_dir"
+
+  # Save metadata
+  cat > "${session_dir}/meta" <<EOF
+TERM_APP=${term_app}
+WINDOW_ID=${window_id}
+OWNER_PID=${owner_pid}
+CAPTURE_METHOD=${capture_method}
+CREATED=$(date +%s)
+EOF
+
+  # Generate focus script
+  if [[ "$capture_method" == "native" ]] && has_native_helper && [[ -n "$window_id" && -n "$owner_pid" ]]; then
+    cat > "${session_dir}/focus.sh" <<SCRIPT
+#!/bin/bash
+"${NATIVE_BIN}" focus --window-id ${window_id} --pid ${owner_pid} 2>/dev/null || \
+  osascript -e 'tell application "${term_app}" to activate'
+SCRIPT
+  elif [[ -n "$window_id" ]]; then
+    cat > "${session_dir}/focus.sh" <<SCRIPT
+#!/bin/bash
+osascript <<'AS'
+tell application "${term_app}"
+  activate
+  try
+    set index of (first window whose id is ${window_id}) to 1
+  end try
+end tell
+AS
+SCRIPT
+  else
+    cat > "${session_dir}/focus.sh" <<SCRIPT
+#!/bin/bash
+osascript -e 'tell application "${term_app}" to activate'
+SCRIPT
+  fi
+  chmod +x "${session_dir}/focus.sh"
+}
+
+cmd_notify() {
+  require_macos
+  require_deps
+
+  local json
+  json="$(read_stdin_json)"
+
+  local session_id hook_event_name
+  session_id=$(echo "$json" | jq -r '.session_id // empty')
+  hook_event_name=$(echo "$json" | jq -r '.hook_event_name // empty')
+
+  if [[ -z "$session_id" ]]; then
+    echo "Error: No session_id in input" >&2
+    exit 1
+  fi
+
+  local session_dir="${NOTIFY_DIR}/${session_id}"
+
+  # Load config (try to use project dir from session if available)
+  load_config
+
+  # Check if notifications are disabled
+  if [[ "$NOTIFY_DISABLED" == "true" ]]; then
+    exit 0
+  fi
+
+  # Throttle check
+  local throttle_file="${session_dir}/last_notify"
+  if is_throttled "$throttle_file"; then
+    exit 0
+  fi
+
+  # Focus check — skip if user is already looking at the terminal
+  if [[ -f "${session_dir}/meta" ]]; then
+    source "${session_dir}/meta"
+    if [[ -n "${WINDOW_ID:-}" ]]; then
+      if is_window_focused "${TERM_APP:-}" "$WINDOW_ID" "${CAPTURE_METHOD:-applescript}" "${OWNER_PID:-}"; then
+        exit 0
+      fi
+    fi
+  fi
+
+  # Determine message based on event
+  local message
+  case "$hook_event_name" in
+    Stop)         message="Task completed" ;;
+    Notification) message="Approval required" ;;
+    *)            message="Notification" ;;
+  esac
+
+  # Build notification command
+  local notify_args=(
+    -title "${NOTIFY_TITLE_CLAUDE}"
+    -message "$message"
+    -sound "${NOTIFY_SOUND}"
+    -group "abc-notify-${session_id}"
+  )
+
+  # Add click action to restore focus
+  if [[ -f "${session_dir}/focus.sh" ]]; then
+    notify_args+=(-execute "${session_dir}/focus.sh")
+  fi
+
+  terminal-notifier "${notify_args[@]}" &>/dev/null &
+
+  # Update throttle timestamp
+  mkdir -p "$session_dir"
+  update_throttle "$throttle_file"
+}
+
+cmd_cleanup() {
+  local json
+  json="$(read_stdin_json)"
+
+  local session_id
+  session_id=$(echo "$json" | jq -r '.session_id // empty')
+
+  # Clean up this session
+  if [[ -n "$session_id" && -d "${NOTIFY_DIR}/${session_id}" ]]; then
+    rm -rf "${NOTIFY_DIR}/${session_id}"
+  fi
+
+  # Clean up stale sessions (older than 5 days)
+  if [[ -d "$NOTIFY_DIR" ]]; then
+    find "$NOTIFY_DIR" -mindepth 1 -maxdepth 1 -type d -mtime +5 -exec rm -rf {} + 2>/dev/null || true
+  fi
+}
+
+cmd_codex() {
+  require_macos
+  require_deps
+
+  local json="$1"
+
+  local event_type cwd thread_id
+  event_type=$(echo "$json" | jq -r '.type // empty')
+  cwd=$(echo "$json" | jq -r '.cwd // empty')
+  thread_id=$(echo "$json" | jq -r '.["thread-id"] // empty')
+
+  # Load config with project dir from JSON
+  load_config "${cwd:-$PWD}"
+
+  # Check if notifications are disabled
+  if [[ "$NOTIFY_DISABLED" == "true" ]]; then
+    exit 0
+  fi
+
+  # Throttle check
+  local throttle_key="${thread_id:-codex}"
+  local throttle_dir="${NOTIFY_DIR}/codex"
+  mkdir -p "$throttle_dir"
+  local throttle_file="${throttle_dir}/${throttle_key}"
+
+  if is_throttled "$throttle_file"; then
+    exit 0
+  fi
+
+  # Focus check — if any configured terminal app is focused, skip
+  if [[ -n "$TERMINAL_APP" ]] && is_any_terminal_focused "$TERMINAL_APP"; then
+    exit 0
+  fi
+
+  # Determine message based on event type
+  local message
+  case "$event_type" in
+    agent-turn-complete)  message="Task completed" ;;
+    agent-turn-paused)    message="Approval required" ;;
+    *)                    message="Notification" ;;
+  esac
+
+  # Build notification command
+  local notify_args=(
+    -title "${NOTIFY_TITLE_CODEX}"
+    -message "$message"
+    -sound "${NOTIFY_SOUND}"
+    -group "abc-notify-codex-${thread_id:-default}"
+  )
+
+  # Add app activation on click — find the most relevant running terminal
+  local active_term
+  active_term=$(find_active_terminal "$TERMINAL_APP")
+  if [[ -n "$active_term" ]]; then
+    local bid
+    bid=$(bundle_id_for "$active_term")
+    if [[ -n "$bid" ]]; then
+      notify_args+=(-activate "$bid")
+    fi
+  fi
+
+  terminal-notifier "${notify_args[@]}" &>/dev/null &
+
+  # Update throttle
+  update_throttle "$throttle_file"
+}
+
+# ---------------------------------------------------------------------------
+# Setup / Remove
+# ---------------------------------------------------------------------------
+
+cmd_setup() {
+  local target="${1:-all}"
+  require_macos
+  require_deps
+
+  case "$target" in
+    claude) setup_claude ;;
+    codex)  setup_codex ;;
+    all)    setup_claude; setup_codex ;;
+    *)      echo "Usage: abc-notify setup [claude|codex|all]" >&2; exit 1 ;;
+  esac
+}
+
+setup_claude() {
+  local settings_dir="$HOME/.claude"
+  local settings_file="${settings_dir}/settings.json"
+
+  mkdir -p "$settings_dir"
+
+  # Check if hooks already registered
+  if [[ -f "$settings_file" ]] && jq -e '.hooks' "$settings_file" &>/dev/null; then
+    if jq -e '.hooks | to_entries[] | .value[] | .hooks[] | select(.command | contains("abc-notify"))' "$settings_file" &>/dev/null; then
+      echo "Claude Code hooks already registered, skipping."
+      return
+    fi
+  fi
+
+  local abc_hooks
+  abc_hooks=$(cat <<'HOOKS'
+{
+  "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "abc-notify init"}]}],
+  "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "abc-notify notify"}]}],
+  "Notification": [{"matcher": "", "hooks": [{"type": "command", "command": "abc-notify notify"}]}],
+  "SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "abc-notify cleanup"}]}]
+}
+HOOKS
+  )
+
+  if [[ -f "$settings_file" ]]; then
+    # Merge with existing settings
+    local tmp
+    tmp=$(mktemp)
+    jq --argjson new_hooks "$abc_hooks" '
+      .hooks = (
+        (.hooks // {}) as $existing |
+        ($new_hooks | to_entries | reduce .[] as $entry ($existing;
+          .[$entry.key] = ((.[$entry.key] // []) + $entry.value)
+        ))
+      )
+    ' "$settings_file" > "$tmp"
+    mv "$tmp" "$settings_file"
+  else
+    # Create new settings file
+    jq -n --argjson hooks "$abc_hooks" '{ hooks: $hooks }' > "$settings_file"
+  fi
+
+  echo "Claude Code hooks registered successfully."
+}
+
+setup_codex() {
+  local config_dir="$HOME/.codex"
+  local config_file="${config_dir}/config.toml"
+
+  mkdir -p "$config_dir"
+
+  if [[ -f "$config_file" ]]; then
+    # Check if already configured
+    if grep -q 'abc-notify' "$config_file" 2>/dev/null; then
+      echo "Codex notify already configured, skipping."
+      return
+    fi
+
+    # Check if notify line exists
+    if grep -q '^notify' "$config_file" 2>/dev/null; then
+      # Append to existing notify array
+      sed -i '' 's/^notify *= *\[/notify = ["abc-notify", /' "$config_file"
+    else
+      # Add notify line
+      echo 'notify = ["abc-notify"]' >> "$config_file"
+    fi
+  else
+    # Create new config file
+    echo 'notify = ["abc-notify"]' > "$config_file"
+  fi
+
+  echo "Codex notify configured successfully."
+}
+
+cmd_remove() {
+  local target="${1:-all}"
+
+  case "$target" in
+    claude) remove_claude ;;
+    codex)  remove_codex ;;
+    all)    remove_claude; remove_codex ;;
+    *)      echo "Usage: abc-notify remove [claude|codex|all]" >&2; exit 1 ;;
+  esac
+}
+
+remove_claude() {
+  local settings_file="$HOME/.claude/settings.json"
+
+  if [[ ! -f "$settings_file" ]]; then
+    echo "No Claude Code settings found."
+    return
+  fi
+
+  if ! jq -e '.hooks' "$settings_file" &>/dev/null; then
+    echo "No hooks found in Claude Code settings."
+    return
+  fi
+
+  local tmp
+  tmp=$(mktemp)
+  jq '
+    .hooks |= (
+      to_entries | map(
+        .value |= map(
+          .hooks |= map(select(.command | contains("abc-notify") | not))
+        ) | .value |= map(select(.hooks | length > 0))
+      ) | map(select(.value | length > 0)) | from_entries
+    ) |
+    if .hooks == {} then del(.hooks) else . end
+  ' "$settings_file" > "$tmp"
+  mv "$tmp" "$settings_file"
+
+  echo "Claude Code hooks removed."
+}
+
+remove_codex() {
+  local config_file="$HOME/.codex/config.toml"
+
+  if [[ ! -f "$config_file" ]]; then
+    echo "No Codex config found."
+    return
+  fi
+
+  if ! grep -q 'abc-notify' "$config_file" 2>/dev/null; then
+    echo "No abc-notify entry in Codex config."
+    return
+  fi
+
+  # Remove abc-notify from notify array
+  sed -i '' 's/"abc-notify", *//g; s/, *"abc-notify"//g; s/"abc-notify"//g' "$config_file"
+
+  # Clean up empty notify array
+  if grep -q 'notify *= *\[\]' "$config_file" 2>/dev/null; then
+    sed -i '' '/^notify *= *\[\]/d' "$config_file"
+  fi
+
+  echo "Codex notify configuration removed."
+}
+
+# ---------------------------------------------------------------------------
+# Doctor
+# ---------------------------------------------------------------------------
+
+cmd_doctor() {
+  local has_error=false
+
+  # macOS check
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo "[✓] macOS detected"
+  else
+    echo "[✗] Not running macOS — abc-notify requires macOS"
+    has_error=true
+  fi
+
+  # terminal-notifier
+  if command -v terminal-notifier &>/dev/null; then
+    echo "[✓] terminal-notifier installed"
+  else
+    echo "[✗] terminal-notifier not found → Run: brew install terminal-notifier"
+    has_error=true
+  fi
+
+  # jq
+  if command -v jq &>/dev/null; then
+    echo "[✓] jq installed"
+  else
+    echo "[✗] jq not found → Run: brew install jq"
+    has_error=true
+  fi
+
+  # Claude Code hooks
+  local settings_file="$HOME/.claude/settings.json"
+  if [[ -f "$settings_file" ]] && jq -e '.hooks | to_entries[] | .value[] | .hooks[] | select(.command | contains("abc-notify"))' "$settings_file" &>/dev/null; then
+    echo "[✓] Claude Code hooks registered"
+  else
+    echo "[✗] Claude Code hooks not configured → Run: abc-notify setup claude"
+    has_error=true
+  fi
+
+  # Codex notify
+  local codex_config="$HOME/.codex/config.toml"
+  if [[ -f "$codex_config" ]] && grep -q 'abc-notify' "$codex_config" 2>/dev/null; then
+    echo "[✓] Codex notify configured"
+  else
+    echo "[✗] Codex notify not configured → Run: abc-notify setup codex"
+    has_error=true
+  fi
+
+  # Native helper
+  if has_native_helper; then
+    echo "[✓] Native window helper installed (${NATIVE_BIN})"
+    # Accessibility permission
+    if "$NATIVE_BIN" check-access &>/dev/null; then
+      echo "[✓] Accessibility permission granted"
+    else
+      echo "[!] Accessibility permission not granted → Run: abc-notify check-access --prompt"
+    fi
+  else
+    echo "[!] Native window helper not installed (using AppleScript fallback)"
+  fi
+
+  # /tmp/abc-notify writable
+  if mkdir -p "$NOTIFY_DIR" 2>/dev/null && [[ -w "$NOTIFY_DIR" ]]; then
+    echo "[✓] ${NOTIFY_DIR}/ is writable"
+  else
+    echo "[✗] ${NOTIFY_DIR}/ is not writable"
+    has_error=true
+  fi
+
+  # Config files
+  echo ""
+  echo "Configuration:"
+  if [[ -f "$HOME/.abc-notify.env" ]]; then
+    echo "  Global: ~/.abc-notify.env"
+  else
+    echo "  Global: (not found)"
+  fi
+  if [[ -f "./.abc-notify.env" ]]; then
+    echo "  Project: ./.abc-notify.env"
+  fi
+
+  echo ""
+  if [[ "$has_error" == "true" ]]; then
+    echo "Some checks failed. Please fix the issues above."
+    return 1
+  else
+    echo "All checks passed!"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Version / Help
+# ---------------------------------------------------------------------------
+
+cmd_version() {
+  echo "abc-notify ${VERSION}"
+}
+
+cmd_help() {
+  cat <<EOF
+abc-notify ${VERSION} — Desktop notifications for AI CLI tools
+
+Usage:
+  abc-notify <command> [options]
+
+Commands:
+  init              Capture terminal window info (Claude Code SessionStart hook)
+  notify            Send desktop notification (Claude Code Stop/Notification hook)
+  cleanup           Clean up session data (Claude Code SessionEnd hook)
+  setup [target]    Register hooks (claude|codex|all)
+  remove [target]   Remove hooks (claude|codex|all)
+  doctor            Check dependencies and configuration
+  version           Show version
+  help              Show this help
+
+Native window commands (requires native helper):
+  capture                                  Capture current terminal window info (JSON)
+  focus --window-id <id> --pid <pid>       Focus a specific window
+  is-focused --window-id <id> --pid <pid>  Check if window is focused
+  check-access [--prompt]                  Check/request accessibility permission
+
+Codex mode:
+  abc-notify '{"type":"...","cwd":"...","thread-id":"..."}'
+
+Configuration:
+  Global:  ~/.abc-notify.env
+  Project: ./.abc-notify.env (overrides global)
+
+For more info, see: https://github.com/JHSeo-git/abc-notify
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Native subcommands (delegate to Swift binary)
+# ---------------------------------------------------------------------------
+
+cmd_native() {
+  local subcmd="$1"
+  shift
+
+  if ! has_native_helper; then
+    echo "Error: Native window helper not installed." >&2
+    echo "Build with: swift build -c release" >&2
+    exit 1
+  fi
+
+  exec "$NATIVE_BIN" "$subcmd" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Main dispatch
+# ---------------------------------------------------------------------------
+
+main() {
+  local cmd="${1:-help}"
+
+  case "$cmd" in
+    init)       cmd_init ;;
+    notify)     cmd_notify ;;
+    cleanup)    cmd_cleanup ;;
+    setup)      cmd_setup "${2:-all}" ;;
+    remove)     cmd_remove "${2:-all}" ;;
+    doctor)     cmd_doctor ;;
+    version|--version|-v) cmd_version ;;
+    help|--help|-h)       cmd_help ;;
+    capture|focus|is-focused|check-access) cmd_native "$cmd" "${@:2}" ;;
+    \{*)        cmd_codex "$cmd" ;;  # JSON argument → Codex mode
+    *)
+      echo "Unknown command: $cmd" >&2
+      echo "Run 'abc-notify help' for usage." >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
