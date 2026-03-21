@@ -42,19 +42,15 @@ jobs:
           uname -m
 
       - name: Build Swift binary
-        run: swift build -c release --product abc-notify-native --disable-sandbox
+        run: |
+          set -euo pipefail
+          ./scripts/build-native-release.sh --output "dist/${{ matrix.artifact-name }}"
 
       - name: Verify architecture binary
         run: |
           set -euo pipefail
-          file .build/release/abc-notify-native
-          .build/release/abc-notify-native version
-
-      - name: Stage release artifact
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          cp .build/release/abc-notify-native "dist/${{ matrix.artifact-name }}"
+          file "dist/${{ matrix.artifact-name }}"
+          "dist/${{ matrix.artifact-name }}" version
 
       - name: Upload architecture artifact
         uses: actions/upload-artifact@v4
@@ -108,11 +104,10 @@ jobs:
       - name: Create universal binary
         run: |
           set -euo pipefail
-          mkdir -p dist
-          lipo -create \
-            artifacts/arm64/abc-notify-native-arm64 \
-            artifacts/x86_64/abc-notify-native-x86_64 \
-            -output dist/abc-notify-native
+          ./scripts/build-universal-native.sh \
+            --arm64 artifacts/arm64/abc-notify-native-arm64 \
+            --x86_64 artifacts/x86_64/abc-notify-native-x86_64 \
+            --output dist/abc-notify-native
 
       - name: Verify universal binary
         run: |

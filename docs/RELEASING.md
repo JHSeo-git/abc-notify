@@ -1,5 +1,5 @@
 ---
-summary: "abc-notify release checklist: validate VERSION and CHANGELOG, tag the release, and publish GitHub release notes."
+summary: "abc-notify release checklist: validate VERSION and CHANGELOG, create the GitHub release, then run the release workflow to upload native assets."
 read_when:
   - "Cutting a new abc-notify release"
   - "Updating VERSION or CHANGELOG.md for a release"
@@ -10,6 +10,7 @@ read_when:
 
 This repository uses a local release flow centered on `scripts/release.sh`.
 The script validates the release inputs, creates the git tag, pushes `main` and the tag, and creates the GitHub release from `CHANGELOG.md`.
+The GitHub Actions release workflow is a separate follow-up step that builds and uploads the universal `abc-notify-native` asset.
 
 ## Expectations
 
@@ -18,6 +19,7 @@ When someone says "release abc-notify", the release is not finished until all of
 - `VERSION` and `CHANGELOG.md` match the target release
 - the local release gate passes
 - the GitHub release exists with the correct tag and notes
+- the release workflow has uploaded the universal `abc-notify-native` asset for that tag
 
 ## Release Automation Notes (`scripts/release.sh`)
 
@@ -40,6 +42,30 @@ The local release gate currently runs:
 - `bats Tests/bash/`
 - `bun run docs:list`
 - `swift build -c release --product abc-notify-native`
+
+## GitHub Actions Follow-Up (`.github/workflows/release.yml`)
+
+After `scripts/release.sh` succeeds, run the release workflow for the same tag.
+
+Today this workflow is `workflow_dispatch` only.
+It is not automatically triggered by `release.published`.
+
+Run:
+
+```bash
+gh workflow run release.yml -f tag="$(cat VERSION)"
+```
+
+What it does:
+
+- checks out the tagged source
+- runs `scripts/build-native-release.sh` on arm64 and x86_64 macOS runners
+- uploads the per-architecture artifacts between jobs
+- runs `scripts/build-universal-native.sh` to create the universal binary
+- uploads `abc-notify-native` to the GitHub release assets
+
+This workflow currently does not update the separate Homebrew tap repo.
+Tap-specific follow-up lives in [releasing-homebrew.md](releasing-homebrew.md).
 
 Required tools on `PATH`:
 
@@ -101,19 +127,23 @@ What it does:
 - [ ] Confirm `gh auth status`
 - [ ] Confirm `git status --short` is clean
 - [ ] Run `./scripts/release.sh`
+- [ ] Run `gh workflow run release.yml -f tag="$(cat VERSION)"`
 - [ ] Confirm the GitHub release has the correct title, tag, and notes
 
 ## Manual Verification
 
-After the script finishes:
+After the script and workflow finish:
 
 1. Open the GitHub release page for the new tag.
 2. Confirm the title matches `abc-notify vX.Y.Z`.
 3. Confirm the release notes match the intended `CHANGELOG.md` section.
 4. Confirm the published tag is the same string as `VERSION`.
+5. Confirm the release has an `abc-notify-native` asset uploaded by the workflow.
+6. Confirm the Homebrew follow-up landed as described in [releasing-homebrew.md](releasing-homebrew.md).
 
 ## Troubleshooting
 
 - If `scripts/release.sh` refuses to run, check branch, worktree, `VERSION`, and `CHANGELOG.md` first.
 - If `gh release create` fails, confirm `gh auth status` first.
+- If the release asset is missing, check the latest run of `release.yml` and confirm you passed the right tag.
 - If the release notes are wrong, fix the matching `CHANGELOG.md` section and rerun with a new version rather than rewriting an already-published release.
