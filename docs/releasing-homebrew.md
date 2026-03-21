@@ -30,15 +30,18 @@ Follow [RELEASING.md](RELEASING.md):
 That script is the source of truth for the release.
 It validates `VERSION` and `CHANGELOG.md`, pushes `main`, pushes the release tag, and creates the GitHub release.
 
-## 2) Run the release workflow to publish the native asset
+## 2) Let the tag-triggered release workflow publish the Homebrew archives
 
-After the GitHub release exists, run the release workflow:
+After `scripts/release.sh` pushes the release tag, `release.yml` starts automatically.
+Keep `workflow_dispatch` only as a manual rebuild path.
+
+If you need a manual rerun:
 
 ```sh
 gh workflow run release.yml -f tag="$(cat VERSION)"
 ```
 
-Then verify the workflow run and the uploaded asset:
+Then verify the workflow run and the uploaded assets:
 
 ```sh
 gh run list -R JHSeo-git/abc-notify --workflow release.yml --limit 5
@@ -49,7 +52,8 @@ gh release view "$(cat VERSION)" -R JHSeo-git/abc-notify --json assets
 What you want:
 
 - the release workflow is green
-- the GitHub release has an `abc-notify-native` asset
+- the GitHub release has `abc-notify_<version>_darwin_arm64.tar.gz`
+- the GitHub release has `abc-notify_<version>_darwin_amd64.tar.gz`
 
 ## 3) Update the separate tap Formula
 
@@ -118,12 +122,13 @@ curl -fsSL "https://github.com/JHSeo-git/abc-notify/archive/refs/tags/${TAG}.tar
 shasum -a 256 "/tmp/abc-notify-${TAG}.tar.gz"
 ```
 
-If you need the uploaded native asset checksum:
+If you need an uploaded Homebrew archive checksum:
 
 ```sh
 TAG="v0.2.0"
-curl -fsSL "https://github.com/JHSeo-git/abc-notify/releases/download/${TAG}/abc-notify-native" -o "/tmp/abc-notify-native-${TAG}"
-shasum -a 256 "/tmp/abc-notify-native-${TAG}"
+VERSION_NO_PREFIX="${TAG#v}"
+curl -fsSL "https://github.com/JHSeo-git/abc-notify/releases/download/${TAG}/abc-notify_${VERSION_NO_PREFIX}_darwin_arm64.tar.gz" -o "/tmp/abc-notify_${VERSION_NO_PREFIX}_darwin_arm64.tar.gz"
+shasum -a 256 "/tmp/abc-notify_${VERSION_NO_PREFIX}_darwin_arm64.tar.gz"
 ```
 
 After editing the tap Formula, verify install again:

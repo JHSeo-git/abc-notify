@@ -7,11 +7,13 @@ Exact window restore for Claude Code requires `abc-notify-native`. Codex restore
 ## Quick Start
 
 ```bash
-brew tap JHSeo-git/abc-notify
-brew install abc-notify
+brew tap JHSeo-git/tap
+brew install --HEAD abc-notify
 abc-notify setup all
 abc-notify doctor
 ```
+
+The current tap Formula is `head`-only. See [Getting Started](docs/getting-started.md) for the latest install details.
 
 ## Docs
 

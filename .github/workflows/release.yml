@@ -1,9 +1,9 @@
 name: Release
 
 on:
-  # release:
-  #   types:
-  #     - published
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -33,7 +33,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
       - name: Runner info
         run: |
@@ -44,7 +44,10 @@ jobs:
       - name: Build Swift binary
         run: |
           set -euo pipefail
-          ./scripts/build-native-release.sh --output "dist/${{ matrix.artifact-name }}"
+          swift build -c release --product abc-notify-native --disable-sandbox
+          mkdir -p dist
+          cp .build/release/abc-notify-native "dist/${{ matrix.artifact-name }}"
+          chmod +x "dist/${{ matrix.artifact-name }}"
 
       - name: Verify architecture binary
         run: |
@@ -66,18 +69,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
       - name: Resolve release tag
         id: release_tag
         run: |
           set -euo pipefail
-          TAG="${{ inputs.tag || github.event.release.tag_name }}"
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
           if [[ -z "$TAG" ]]; then
             echo "Error: release tag is required"
             exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version_no_prefix=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Verify version matches VERSION file
         run: |
@@ -101,68 +105,56 @@ jobs:
           name: abc-notify-native-x86_64
           path: artifacts/x86_64
 
-      - name: Create universal binary
+      - name: Wait for GitHub release
         run: |
           set -euo pipefail
-          ./scripts/build-universal-native.sh \
-            --arm64 artifacts/arm64/abc-notify-native-arm64 \
-            --x86_64 artifacts/x86_64/abc-notify-native-x86_64 \
-            --output dist/abc-notify-native
-
-      - name: Verify universal binary
-        run: |
-          set -euo pipefail
-          file dist/abc-notify-native
-          ARCHS="$(lipo -archs dist/abc-notify-native)"
-          case "$ARCHS" in
-            *arm64*x86_64*|*x86_64*arm64*) ;;
-            *)
-              echo "Error: expected universal binary with arm64 and x86_64, got: $ARCHS"
-              exit 1
-              ;;
-          esac
-          dist/abc-notify-native version
-
-      - name: Verify GitHub release exists
-        run: gh release view "${{ steps.release_tag.outputs.tag }}" >/dev/null
+          TAG="${{ steps.release_tag.outputs.tag }}"
+          for _ in {1..30}; do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Error: GitHub release not found for $TAG after waiting" >&2
+          exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package Homebrew archives
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          package_archive() {
+            local arch="$1"
+            local native_path="$2"
+            local staging_dir
+            staging_dir="$(mktemp -d "${TMPDIR:-/tmp}/abc-notify-homebrew-package.XXXXXX")"
+            trap 'rm -rf "$staging_dir"' RETURN
+
+            mkdir -p "${staging_dir}/bin" "${staging_dir}/share/abc-notify"
+            cp bin/abc-notify "${staging_dir}/bin/abc-notify"
+            cp "$native_path" "${staging_dir}/bin/abc-notify-native"
+            cp VERSION "${staging_dir}/share/abc-notify/VERSION"
+            chmod +x "${staging_dir}/bin/abc-notify" "${staging_dir}/bin/abc-notify-native"
+
+            tar -C "$staging_dir" -czf "dist/abc-notify_${{ steps.release_tag.outputs.version_no_prefix }}_darwin_${arch}.tar.gz" bin share
+          }
+
+          package_archive arm64 artifacts/arm64/abc-notify-native-arm64
+          package_archive amd64 artifacts/x86_64/abc-notify-native-x86_64
+
+      - name: Verify packaged archives
+        run: |
+          set -euo pipefail
+          tar -tzf "dist/abc-notify_${{ steps.release_tag.outputs.version_no_prefix }}_darwin_arm64.tar.gz" >/dev/null
+          tar -tzf "dist/abc-notify_${{ steps.release_tag.outputs.version_no_prefix }}_darwin_amd64.tar.gz" >/dev/null
 
       - name: Upload release asset
         run: |
           set -euo pipefail
           gh release upload "${{ steps.release_tag.outputs.tag }}" \
-            dist/abc-notify-native \
+            "dist/abc-notify_${{ steps.release_tag.outputs.version_no_prefix }}_darwin_arm64.tar.gz" \
+            "dist/abc-notify_${{ steps.release_tag.outputs.version_no_prefix }}_darwin_amd64.tar.gz" \
             --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Switch to main for Formula update
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          git checkout -B release-formula-update origin/main
-
-      - name: Update Formula sha256
-        run: |
-          set -euo pipefail
-          TAG="${{ steps.release_tag.outputs.tag }}"
-          TARBALL_URL="https://github.com/JHSeo-git/abc-notify/archive/refs/tags/${TAG}.tar.gz"
-          curl -fsSL "$TARBALL_URL" -o source.tar.gz
-          NEW_SHA=$(shasum -a 256 source.tar.gz | awk '{print $1}')
-          sed -i '' "s/sha256 \".*\"/sha256 \"${NEW_SHA}\"/" Formula/abc-notify.rb
-          rm source.tar.gz
-
-      - name: Commit Formula update
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/abc-notify.rb
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "chore: update Formula sha256 for ${{ steps.release_tag.outputs.tag }}"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
