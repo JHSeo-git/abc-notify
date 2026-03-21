@@ -16,7 +16,7 @@ read_when:
 - `scripts/uninstall.sh`: uninstall script
 - `scripts/docs-list.ts`: lists `docs/` files and metadata
 - `scripts/committer`: helper that stages only selected paths before commit
-- `Formula/abc-notify.rb`: Homebrew formula
+- `docs/releasing-homebrew.md`: Homebrew tap release and verification guide
 
 ## Key Runtime Split
 
@@ -91,7 +91,7 @@ sudo ./scripts/dev-link-homebrew.sh unlink
 ```
 
 This script links the current workspace into `$(brew --prefix)/bin`.
-It does not replace Formula-based install testing.
+It does not replace tap-based install testing.
 It refuses to overwrite non-symlink files in the Homebrew prefix.
 
 ## Release Flow

@@ -60,7 +60,7 @@ What you want:
 Today the Homebrew Formula lives in `~/Projects/homebrew-tap` / `https://github.com/JHSeo-git/homebrew-tap`.
 Do not assume `Formula/abc-notify.rb` in this repository is what `brew tap JHSeo-git/tap` installs.
 
-For a stable Formula, update the tap repo's `Formula/abc-notify.rb` so it matches the current release model you want to ship.
+The tap Formula should point at the current release archives for the version you want to ship.
 
 At minimum, verify the tap repo state:
 
@@ -70,8 +70,7 @@ git pull --rebase origin main
 sed -n '1,220p' Formula/abc-notify.rb
 ```
 
-If the tap Formula is still `head`-only, Homebrew users will need `brew install --HEAD abc-notify`.
-If you want plain `brew install abc-notify`, convert the tap Formula to a stable release-based install first.
+The expected end state is a stable release Formula, so `brew install abc-notify` should work without `--HEAD`.
 
 ## 4) Verify Homebrew install
 
@@ -86,7 +85,7 @@ abc-notify version
 abc-notify doctor
 ```
 
-If the tap is intentionally still `head`-only, verify that flow explicitly instead:
+If the tap Formula unexpectedly reverted to `head`-only, verify that flow explicitly instead:
 
 ```sh
 brew uninstall abc-notify || true
@@ -112,9 +111,9 @@ abc-notify remove codex
 
 Only do this if the tap Formula still does not match the release state you want to publish.
 
-The exact edit depends on whether the tap stays source-built or moves to a release-asset install model.
+The expected model is a stable release-asset Formula. Only fall back to a source-built `head` Formula temporarily.
 
-If you need the source tarball checksum for a stable source Formula:
+If you need the source tarball checksum for a temporary source Formula:
 
 ```sh
 TAG="v0.2.0"
@@ -144,7 +143,7 @@ Commit only the Formula file with the normal helper:
 
 ```sh
 cd ~/Projects/homebrew-tap
-./scripts/committer "chore: update Formula sha256 for ${TAG}" Formula/abc-notify.rb
+./scripts/committer "chore: release abc-notify ${TAG#v} formula" Formula/abc-notify.rb
 git push origin main
 ```
 
@@ -152,4 +151,4 @@ git push origin main
 
 - This repo and the tap repo have different responsibilities. Keep them separate in release notes and operator docs.
 - The release workflow here currently publishes assets only. It does not push tap Formula changes.
-- If the tap stays `head`-only, document that clearly for users instead of implying stable `brew install abc-notify`.
+- If the tap ever falls back to `head`-only, document that clearly for users instead of implying stable `brew install abc-notify`.

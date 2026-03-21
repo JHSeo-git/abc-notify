@@ -26,13 +26,13 @@ brew install terminal-notifier jq
 
 ```bash
 brew tap JHSeo-git/tap
-brew install --HEAD abc-notify
+brew install abc-notify
 ```
 
 Notes:
 
-- The current tap Formula is `head`-only, so `brew install abc-notify` does not work yet.
-- The Homebrew install path builds and installs `abc-notify-native` as part of the formula.
+- The tap Formula installs the release archive and includes `abc-notify-native`.
+- You do not need a local Swift toolchain for the Homebrew path.
 
 ### Script Install
 
