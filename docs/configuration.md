@@ -44,7 +44,10 @@ Example:
 TERMINAL_APP=iTerm2,Terminal,WezTerm
 ```
 
-In Codex mode, abc-notify looks for a running terminal from this list and activates it when you click the notification.
+If this is set, abc-notify uses it as the preferred terminal-app list for focus detection and activation.
+
+- Claude Code uses it as a fallback when exact window capture is unavailable.
+- Codex uses it for frontmost-app checks and as a fallback for click-to-activate behavior.
 
 ### `NOTIFY_SOUND`
 
@@ -88,7 +91,7 @@ NOTIFY_TITLE_CODEX="Codex"
 
 ## Terminal Detection
 
-If `TERMINAL_APP` is not set, abc-notify maps `TERM_PROGRAM` to these app names:
+If `TERMINAL_APP` is not set, abc-notify falls back to a shared `TERM_PROGRAM` mapping for terminal app names:
 
 - `iTerm.app` / `iTerm2` -> `iTerm2`
 - `Apple_Terminal` -> `Terminal`
@@ -98,4 +101,8 @@ If `TERMINAL_APP` is not set, abc-notify maps `TERM_PROGRAM` to these app names:
 - `Hyper` -> `Hyper`
 - `ghostty` -> `Ghostty`
 
-If accurate focus restore matters, it is safer to set `TERMINAL_APP` explicitly.
+This fallback is not Codex-only. Claude Code and Codex both use it when `TERMINAL_APP` is unset.
+
+Codex also has an extra click-activation detection layer that can infer a bundle ID from environment data such as `__CFBundleIdentifier`, `TERM_PROGRAM`, `tmux`, and terminal-specific variables. That extra detection is specific to Codex app activation and does not change the shared config fallback above.
+
+If accurate focus restore matters, it is safer to set `TERMINAL_APP` explicitly. Claude Code can restore an exact session window when capture data is available, while Codex still restores app focus only.

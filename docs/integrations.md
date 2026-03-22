@@ -25,6 +25,49 @@ Config location:
 
 - `~/.claude/settings.json`
 
+Direct config example:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "abc-notify init" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "abc-notify notify" }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "abc-notify notify" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "abc-notify cleanup" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+If `settings.json` already has other keys, merge these hook entries instead of replacing the whole file.
+
 Hooks that are added:
 
 - `SessionStart` -> `abc-notify init`
@@ -73,6 +116,14 @@ Config location:
 
 - `~/.codex/config.toml`
 
+Direct config example:
+
+```toml
+notify = ["abc-notify"]
+```
+
+If `config.toml` already has a `notify` array, add `"abc-notify"` to that existing array instead of replacing unrelated config.
+
 Config change:
 
 - Adds `abc-notify` to the `notify` array in `~/.codex/config.toml`
@@ -90,6 +141,11 @@ Notification body behavior:
 
 Codex mode accepts a JSON argument directly.
 The `cwd` field is used to load project-local `.abc-notify.env` overrides when available.
+
+Terminal detection notes:
+
+- the shared config fallback still applies: if `TERMINAL_APP` is unset, abc-notify falls back to `TERM_PROGRAM` mapping
+- Codex also has an extra app-activation detection layer for click handling and can infer a bundle ID from environment data such as `__CFBundleIdentifier`, `TERM_PROGRAM`, `tmux`, and terminal-specific variables
 
 ```bash
 abc-notify '{"type":"agent-turn-complete","cwd":"/path/to/project","thread-id":"123"}'
@@ -111,7 +167,8 @@ Claude Code:
 
 Codex:
 
-- Looks for a running terminal app from the configured list and activates it
+- Activates the detected terminal app or bundle when you click the notification
+- Uses the configured `TERMINAL_APP` list when available, with extra Codex-specific bundle detection as a fallback
 - Does not restore a per-session exact window like Claude Code does
 
 ## Native Helper

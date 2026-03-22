@@ -12,8 +12,8 @@ read_when:
 - `bin/abc-notify`: main Bash entrypoint
 - `Sources/abc-notify-native/`: native window capture and focus logic
 - `Package.swift`: Swift package configuration
-- `scripts/install.sh`: installer script
-- `scripts/uninstall.sh`: uninstall script
+- `scripts/manual-install.sh`: checkout-based manual install script
+- `scripts/manual-uninstall.sh`: checkout-based manual uninstall script
 - `scripts/docs-list.ts`: lists `docs/` files and metadata
 - `scripts/committer`: helper that stages only selected paths before commit
 - `docs/releasing-homebrew.md`: Homebrew tap release and verification guide
@@ -75,8 +75,8 @@ bin/abc-notify doctor
 If you changed the install or uninstall flow, check these too:
 
 ```bash
-scripts/install.sh
-scripts/uninstall.sh
+bash scripts/manual-install.sh
+bash scripts/manual-uninstall.sh
 ```
 
 ## Dev Homebrew Link

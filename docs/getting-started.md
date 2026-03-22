@@ -34,37 +34,16 @@ Notes:
 - The tap Formula installs the release archive and includes `abc-notify-native`.
 - You do not need a local Swift toolchain for the Homebrew path.
 
-### Script Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/JHSeo-git/abc-notify/main/scripts/install.sh | bash
-```
-
-Notes:
-
-- This installer requires macOS and Homebrew.
-- If `terminal-notifier` or `jq` is missing, the script installs them with Homebrew first.
-- It installs the `abc-notify` shell binary to `/usr/local/bin/abc-notify` and `VERSION` to `/usr/local/share/abc-notify/VERSION`.
-- It runs `abc-notify setup all` and `abc-notify doctor` automatically at the end.
-- When run directly from the raw GitHub URL, the script does not have the full repository checkout, so it usually cannot build and install `abc-notify-native`.
-- In that mode, abc-notify uses the AppleScript fallback until you install the native helper separately.
-- If you want more reliable window focus restore, prefer the Homebrew path or the manual install below with the native helper.
-
 ### Manual Install
 
 ```bash
 git clone https://github.com/JHSeo-git/abc-notify.git
 cd abc-notify
-swift build -c release
-cp bin/abc-notify /usr/local/bin/
-cp .build/release/abc-notify-native /usr/local/bin/
-mkdir -p /usr/local/share/abc-notify
-cp VERSION /usr/local/share/abc-notify/VERSION
-chmod +x /usr/local/bin/abc-notify
-chmod +x /usr/local/bin/abc-notify-native
+bash scripts/manual-install.sh
 ```
 
-abc-notify can still work without the native helper, but it will be limited to the AppleScript fallback path.
+This script builds the release helper from the local checkout, installs `abc-notify` and `abc-notify-native`, then runs `setup all` and `doctor`.
+To remove that checkout-based install later, run `bash scripts/manual-uninstall.sh` from the same repository.
 
 ## Register Hooks
 
@@ -79,6 +58,56 @@ Register individually:
 ```bash
 abc-notify setup claude
 abc-notify setup codex
+```
+
+If you prefer to edit the config files directly, use these minimal examples.
+Keep any unrelated existing settings and merge the snippets instead of replacing the whole file.
+
+Claude Code `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "abc-notify init" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "abc-notify notify" }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "abc-notify notify" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "abc-notify cleanup" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Codex `~/.codex/config.toml`:
+
+```toml
+notify = ["abc-notify"]
 ```
 
 ## Verify
